@@ -1,0 +1,91 @@
+# TreeFeller - only fells natural trees
+#
+# Break the bottom log of a tree with an axe and the whole tree comes down.
+# Player-placed logs are tracked, so builds made of logs are never chopped.
+# A tree must also touch at least one natural leaf (persistent=false) to count.
+#
+# Hold sneak to break a single log normally.
+# Requires Skript 2.7+ on Minecraft 1.17+.
+
+options:
+    max-logs: 256
+    permission: treefeller.use
+
+# ---------- helpers ----------
+
+function tfKey(b: block) :: text:
+    return "%world of {_b}%;%x-coordinate of {_b}%;%y-coordinate of {_b}%;%z-coordinate of {_b}%"
+
+function tfIsLog(b: block) :: boolean:
+    if "%type of {_b}%" contains "log":
+        return true
+    return false
+
+function tfIsNaturalLeaf(b: block) :: boolean:
+    if "%type of {_b}%" contains "leaves":
+        if "%blockdata of {_b}%" contains "persistent=false":
+            return true
+    return false
+
+# ---------- track player-placed logs ----------
+
+on place:
+    tfIsLog(event-block) is true
+    set {tf::placed::%tfKey(event-block)%} to true
+
+on burn:
+    delete {tf::placed::%tfKey(event-block)%}
+
+on explode:
+    loop exploded blocks:
+        delete {tf::placed::%tfKey(loop-value)%}
+
+# ---------- tree felling ----------
+
+on break:
+    tfIsLog(event-block) is true
+
+    # Player-placed log: break it normally and forget it
+    if {tf::placed::%tfKey(event-block)%} is set:
+        delete {tf::placed::%tfKey(event-block)%}
+        stop
+
+    player has permission "{@permission}"
+    player's gamemode is survival
+    player is not sneaking
+    player's tool is any axe
+
+    set {_type} to "%type of event-block%"
+    set {_hasLeaves} to false
+
+    # Flood fill through connected natural logs of the same type
+    add event-block to {_queue::*}
+    set {_seen::%tfKey(event-block)%} to true
+    set {_i} to 0
+    while {_i} < size of {_queue::*}:
+        add 1 to {_i}
+        set {_b} to {_queue::%{_i}%}
+        loop blocks in radius 1.8 around {_b}:
+            set {_k} to tfKey(loop-block)
+            if {_seen::%{_k}%} is not set:
+                set {_seen::%{_k}%} to true
+                if tfIsNaturalLeaf(loop-block) is true:
+                    set {_hasLeaves} to true
+                else if "%type of loop-block%" is {_type}:
+                    if {tf::placed::%{_k}%} is not set:
+                        if size of {_queue::*} < {@max-logs}:
+                            add loop-block to {_queue::*}
+
+    # No natural leaves touching it -> not a real tree, just break the one log
+    {_hasLeaves} is true
+
+    # Break everything except the original block (the event breaks that one)
+    set {_count} to 0
+    set {_startKey} to tfKey(event-block)
+    loop {_queue::*}:
+        if tfKey(loop-value) is not {_startKey}:
+            break loop-value naturally using player's tool
+            add 1 to {_count}
+
+    if {_count} > 0:
+        damage player's tool by {_count}
